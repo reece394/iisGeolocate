@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Help;
-using System.CommandLine.NamingConventionBinder;
+using System.CommandLine.Invocation;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -23,7 +23,7 @@ internal class Program
     private static Dictionary<string, UniqueIp> _uniqueIps;
 
     private static readonly string Header =
-        $"iisgeolocate version {Assembly.GetExecutingAssembly().GetName().Version}" +
+        $"iisgeolocate version {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}" +
         "\r\n\r\nAuthor: Eric Zimmerman (saericzimmerman@gmail.com)" +
         "\r\nhttps://github.com/EricZimmerman/iisGeolocate";
 
@@ -33,35 +33,45 @@ internal class Program
     {
         ExceptionlessClient.Default.Startup("ujUuuNlhz7ZQKoDxBohBMKmPxErDgbFmNdYvPRHM");
 
+        var dOpt = new Option<string>("-d")
+        {
+            Description = "Directory to recursively process. Either this or -f is required"
+        };
+        
+        var csvOpt = new Option<string>(
+            "--csv")
+        {
+            Description = "Directory to save CSV formatted results to. Be sure to include the full path in double quotes"
+        
+        };
+        
+        var sblOpt = new Option<bool>("--sbl")
+        {
+            Description = "When true, do NOT show bad lines to console (they are still logged to a file). Default is false",
+            DefaultValueFactory = _ => false
+        };
+        
+        var nulOpt = new Option<bool>("--nul")
+        {
+            Description = "When true, do NOT create updated CSV files in --csv directory. Default is false",
+            DefaultValueFactory = _ => false
+        };
+        
         _rootCommand = new RootCommand
         {
-            new Option<string>(
-                "-d",
-                "The directory that contains IIS logs. This will be recursively searched for *.log files"),
-
-            new Option<string>(
-                "--csv",
-                "The directory to write results to"),
-
-            new Option<bool>(
-                "--sbl",
-                () => false,
-                "When true, do NOT show bad lines to console (they are still logged to a file)"),
-
-            new Option<bool>(
-                "--nul",
-                () => false,
-                "When true, do NOT create updated CSV files in --csv directory")
+            dOpt,
+            csvOpt,
+            sblOpt,
+            nulOpt
         };
 
-        _rootCommand.Options.Single(t=>t.Name == "d").IsRequired = true;
-        _rootCommand.Options.Single(t=>t.Name == "csv").IsRequired = true;
         
         _rootCommand.Description = Header;
 
-        _rootCommand.Handler = CommandHandler.Create(DoWork);
-
-        await _rootCommand.InvokeAsync(args);
+        _rootCommand.SetAction(result => DoWork(result.GetValue(dOpt), result.GetValue(csvOpt), result.GetValue(sblOpt),
+            result.GetValue(nulOpt)));
+            
+        var foo = _rootCommand.Parse(args).InvokeAsync();
         
         Log.CloseAndFlush();
     }
@@ -80,12 +90,8 @@ internal class Program
 
         if (string.IsNullOrEmpty(d) || string.IsNullOrEmpty(csv))
         {
-            var helpBld = new HelpBuilder(LocalizationResources.Instance, Console.WindowWidth);
-            var hc = new HelpContext(helpBld, _rootCommand, Console.Out);
-
-            helpBld.Write(hc);
-
-            Log.Warning("Both -d and --csv are required. Exiting");
+            var aaa = new CustomHelpAction(new HelpAction());
+            aaa.Invoke(_rootCommand.Parse("Both -d and --csv are required. Exiting"));
             Console.WriteLine();
             return;
         }
@@ -352,6 +358,25 @@ internal class Program
         }
 
         Console.WriteLine();
+    }
+    
+    private class CustomHelpAction : SynchronousCommandLineAction
+    {
+        private readonly HelpAction _defaultHelp;
+
+        public CustomHelpAction(HelpAction action)
+        {
+            _defaultHelp = action;
+        }
+
+        public override int Invoke(ParseResult parseResult)
+        {
+            var result = _defaultHelp.Invoke(parseResult);
+
+            Log.Warning("{Msg}", string.Join(" ",parseResult.Tokens));
+
+            return result;
+        }
     }
 
     private static GeoResults GetIpInfo(string ip, DatabaseReader reader)
